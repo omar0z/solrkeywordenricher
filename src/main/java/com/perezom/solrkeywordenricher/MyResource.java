@@ -21,8 +21,6 @@ public class MyResource {
     @Produces(MediaType.TEXT_PLAIN)
     public String getIt() {
         KeywordsClient keywordsClient = new KeywordsClient();
-        keywordsClient.process();
-        
-        return "Got it!";
+        return keywordsClient.process().toString();
     }
 }
