@@ -23,7 +23,6 @@ import javax.ws.rs.core.Response;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.ConcurrentUpdateSolrClient;
-import org.apache.solr.client.solrj.util.ClientUtils;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrInputDocument;
@@ -37,21 +36,23 @@ class KeywordsClient {
     private SolrDocumentList documents;
     private final ConcurrentUpdateSolrClient solrClient;
     private final List<Callable<SolrDocument>> callables;
+    private final List<SolrInputDocument> enrichedDocuments;
     private final ExecutorService executor;
     private static final Logger LOG = Logger.getLogger(KeywordsClient.class.getName());
-    private static final String KEYWORD_SERVICE_URI = "http://s-cnect-doris-t.cnect.cec.eu.int:3000/keywords";
+    private static final String KEYWORD_SERVICE_URI = "http://s-cnect-drive-in-d/service/keyword-extraction";
 
     public KeywordsClient() {
         this.documents = new SolrDocumentList();
         this.solrClient = new ConcurrentUpdateSolrClient("http://localhost:8983/solr/fet-h2020-ria-noHPC-1", 32, 8);
         this.callables = new ArrayList<>();
         this.executor = Executors.newWorkStealingPool();
+        this.enrichedDocuments = new ArrayList();
     }
 
     public Response.ResponseBuilder process() {
         getDocumentsFromSolr();
-        prepareTasks();
-        executeTasks();
+        prepareDocs();
+        sendToSolr();
         return Response.ok();
     }
 
@@ -70,73 +71,57 @@ class KeywordsClient {
         }
     }
 
-    private void prepareTasks() {
+    private void prepareDocs() {
         LOG.info("Preparing tasks...");
-        this.documents.stream()
-                .forEach(doc -> {
-                    this.callables.add(prepareCallable(doc));
-                });
+        Client client = ClientBuilder.newClient();
+        for (SolrDocument doc : this.documents) {
+            this.enrichedDocuments.add(enrichDocument(doc, client));
+        }
+        //client.close();
         LOG.info("Tasks ready to be executed.");
     }
 
-    private Callable<SolrDocument> prepareCallable(SolrDocument doc) {
-        Callable<SolrDocument> task = () -> {
+    private SolrInputDocument enrichDocument(SolrDocument doc, Client client) {
 
-            Client client = ClientBuilder.newClient();
+        Response response = client.target(KEYWORD_SERVICE_URI)
+                .request(MediaType.APPLICATION_FORM_URLENCODED)
+                .post(Entity.entity(new KeywordsEntity((String) doc.get("projectAbstract")), MediaType.APPLICATION_JSON));
 
-            Response response = client.target(KEYWORD_SERVICE_URI)
-                    .request(MediaType.APPLICATION_JSON)
-                    .post(Entity.entity(new KeywordsEntity((String) doc.get("projectAbstract")), MediaType.APPLICATION_JSON));
+        KeywordsResponseEntity responseEntity = response.readEntity(KeywordsResponseEntity.class);
 
-            KeywordsResponseEntity responseEntity = response.readEntity(KeywordsResponseEntity.class);
+        List<String> keywords = new ArrayList<>();
+        LOG.info(responseEntity.getKeywords().toString());
+        responseEntity.getKeywords()
+                .stream()
+                .forEach((Keyword keywordObject) -> {
+                    keywords.add(keywordObject.getLemmatized());
+                });
 
-            //client.close();
+        SolrInputDocument inputDoc = new SolrInputDocument();
+        doc.getFieldNames().stream().forEach((name) -> {
+            inputDoc.addField(name, doc.getFieldValue(name));
+        });
 
-            List<String> keywords = new ArrayList<>();
-            responseEntity.getKeywords()
-                    .stream()
-                    .forEach(keywordObject -> {
-                        keywords.add(keywordObject.getLemmatized());
-                    });
+        inputDoc.addField("keywords_ss", keywords);
 
-            doc.addField("keywords_ss", keywords);
+        return inputDoc;
 
-            return doc;
-        };
-        return task;
     }
 
-    private void executeTasks() {
+    private void sendToSolr() {
         LOG.info("Executing tasks...");
         try {
-            executor.invokeAll(callables)
-                    .stream()
-                    .parallel()
-                    .map((Future<SolrDocument> future) -> {
-                        try {
-                            return future.get();
-                        } catch (InterruptedException | ExecutionException e) {
-                            throw new IllegalStateException(e);
-                        }
-                    }).forEach((SolrDocument doc) -> {
-                        LOG.log(Level.INFO, "Executing task on thread {0}", Thread.currentThread().getName());
-                        try {
-                            SolrInputDocument inputDoc = new SolrInputDocument();
-                            doc.getFieldNames().stream().forEach((name) -> {
-                                inputDoc.addField(name, doc.getFieldValue(name));
-                            });
-                            this.solrClient.add(inputDoc);
-                            this.solrClient.commit();
-                         LOG.info("Executed task successfully!!");
-                        } catch (SolrServerException | IOException ex) {
-                            Logger.getLogger(KeywordsClient.class.getName()).log(Level.SEVERE, null, ex);
-                        }
-            });
-        } catch (InterruptedException ex) {
-            Logger.getLogger(KeywordsClient.class.getName()).log(Level.SEVERE, null, ex);
-            throw new RuntimeException(ex.getMessage());
-        }
+            for (SolrInputDocument doc : this.enrichedDocuments) {
+                LOG.log(Level.INFO, "Executing task on thread {0}", Thread.currentThread().getName());
+                LOG.info(doc.get("keywords_ss").toString());
+                this.solrClient.add(doc);
 
+                LOG.info("Executed task successfully!!");
+            }
+            this.solrClient.commit();
+        } catch (SolrServerException | IOException ex) {
+            Logger.getLogger(KeywordsClient.class.getName()).log(Level.SEVERE, null, ex);
+        }
     }
 
 }
