@@ -13,6 +13,7 @@ public class KeywordsEntity {
 
         private String text;
         private int threshold;
+        private static final String DORIS_API_KEY = "59b252b6511e69032defce27";
 
         public KeywordsEntity(String text) {
             this.text = text;

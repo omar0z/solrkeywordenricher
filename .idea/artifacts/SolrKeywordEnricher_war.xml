@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="war" name="SolrKeywordEnricher:war">
+    <output-path>$PROJECT_DIR$/target</output-path>
+    <root id="archive" name="SolrKeywordEnricher.war">
+      <element id="artifact" artifact-name="SolrKeywordEnricher:war exploded" />
+    </root>
+  </artifact>
+</component>

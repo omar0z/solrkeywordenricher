@@ -6,26 +6,33 @@
 package com.perezom.solrkeywordenricher;
 
 import java.io.IOException;
+import java.net.Authenticator;
+import java.net.PasswordAuthentication;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.ws.rs.client.Client;
 import javax.ws.rs.client.ClientBuilder;
 import javax.ws.rs.client.Entity;
+import javax.ws.rs.core.Form;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.MultivaluedHashMap;
+import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import org.apache.solr.client.solrj.SolrQuery;
+import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.ConcurrentUpdateSolrClient;
+import org.apache.solr.client.solrj.request.AbstractUpdateRequest;
+import org.apache.solr.client.solrj.request.GenericSolrRequest;
+import org.apache.solr.client.solrj.request.QueryRequest;
+import org.apache.solr.client.solrj.request.UpdateRequest;
 import org.apache.solr.common.SolrDocument;
 import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrInputDocument;
+import org.glassfish.jersey.client.ClientConfig;
+import org.glassfish.jersey.client.ClientProperties;
 
 /**
  *
@@ -35,17 +42,13 @@ class KeywordsClient {
 
     private SolrDocumentList documents;
     private final ConcurrentUpdateSolrClient solrClient;
-    private final List<Callable<SolrDocument>> callables;
     private final List<SolrInputDocument> enrichedDocuments;
-    private final ExecutorService executor;
     private static final Logger LOG = Logger.getLogger(KeywordsClient.class.getName());
-    private static final String KEYWORD_SERVICE_URI = "http://s-cnect-drive-in-d/service/keyword-extraction";
+    private static final String KEYWORD_SERVICE_URI = "http://s-cnect-drive-in-d.cnect.cec.eu.int/api/service/keyword-extraction";
 
     public KeywordsClient() {
         this.documents = new SolrDocumentList();
         this.solrClient = new ConcurrentUpdateSolrClient("http://localhost:8983/solr/fet-h2020-ria-noHPC-1", 32, 8);
-        this.callables = new ArrayList<>();
-        this.executor = Executors.newWorkStealingPool();
         this.enrichedDocuments = new ArrayList();
     }
 
@@ -61,9 +64,11 @@ class KeywordsClient {
         SolrQuery query = new SolrQuery();
         query.setRequestHandler("/select");
         query.set("q", "*:*");
-        query.set("rows", 4000);
+        query.set("rows", 5000);
         try {
-            this.documents = this.solrClient.query(query).getResults();
+            QueryRequest  request = new QueryRequest(query);
+            request.setBasicAuthCredentials("doris","@Doris1");
+            this.documents = request.process(this.solrClient).getResults();
             LOG.log(Level.INFO, "Request succeeded. Documents retrieved: {0} documents", this.documents.size());
 
         } catch (SolrServerException | IOException ex) {
@@ -73,30 +78,56 @@ class KeywordsClient {
 
     private void prepareDocs() {
         LOG.info("Preparing tasks...");
+        
         Client client = ClientBuilder.newClient();
+//        Authenticator.setDefault(new ProxyAuthenticator("perezom", "Scoutpower1"));
+//        System.setProperty("http.proxyHost", "158.169.131.13");
+//        System.setProperty("http.proxyPort", "8012");
+
+        
         for (SolrDocument doc : this.documents) {
-            this.enrichedDocuments.add(enrichDocument(doc, client));
+            try {
+                this.enrichedDocuments.add(enrichDocument(doc, client));
+            } catch (IOException ex) {
+                Logger.getLogger(KeywordsClient.class.getName()).log(Level.SEVERE, null, ex);
+            }
         }
-        //client.close();
         LOG.info("Tasks ready to be executed.");
     }
 
-    private SolrInputDocument enrichDocument(SolrDocument doc, Client client) {
+    private SolrInputDocument enrichDocument(SolrDocument doc, Client client) throws IOException {
+        LOG.info("Enriching document...");
 
+        MultivaluedMap<String, String> parameters = new MultivaluedHashMap<>();
+        parameters.add("text", (String) doc.get("projectAbstract"));
+        parameters.add("DORIS_API_KEY", "59b252b6511e69032defce27");
+
+        Form form = new Form(parameters);
         Response response = client.target(KEYWORD_SERVICE_URI)
+                .property(ClientProperties.PROXY_URI, "http://158.169.131.13")
+                .property(ClientProperties.PROXY_USERNAME, "perezom")
+                .property(ClientProperties.PROXY_PASSWORD, "Scoutpower1")
                 .request(MediaType.APPLICATION_FORM_URLENCODED)
-                .post(Entity.entity(new KeywordsEntity((String) doc.get("projectAbstract")), MediaType.APPLICATION_JSON));
+                .post(Entity.form(form));
 
         KeywordsResponseEntity responseEntity = response.readEntity(KeywordsResponseEntity.class);
 
         List<String> keywords = new ArrayList<>();
         LOG.info(responseEntity.getKeywords().toString());
+        if (responseEntity == null || responseEntity.getKeywords() == null || responseEntity.getKeywords().isEmpty()) {
+            return convertToInputDoc(doc, new ArrayList<>());
+        }
         responseEntity.getKeywords()
                 .stream()
                 .forEach((Keyword keywordObject) -> {
                     keywords.add(keywordObject.getLemmatized());
                 });
 
+        return convertToInputDoc(doc, keywords);
+
+    }
+
+    private SolrInputDocument convertToInputDoc(SolrDocument doc, List<String> keywords) {
         SolrInputDocument inputDoc = new SolrInputDocument();
         doc.getFieldNames().stream().forEach((name) -> {
             inputDoc.addField(name, doc.getFieldValue(name));
@@ -105,7 +136,6 @@ class KeywordsClient {
         inputDoc.addField("keywords_ss", keywords);
 
         return inputDoc;
-
     }
 
     private void sendToSolr() {
@@ -114,14 +144,32 @@ class KeywordsClient {
             for (SolrInputDocument doc : this.enrichedDocuments) {
                 LOG.log(Level.INFO, "Executing task on thread {0}", Thread.currentThread().getName());
                 LOG.info(doc.get("keywords_ss").toString());
-                this.solrClient.add(doc);
+                UpdateRequest request = new UpdateRequest();
+                request.setBasicAuthCredentials("doris","@Doris1");
+                request.add(doc);
+                request.setAction(AbstractUpdateRequest.ACTION.COMMIT, false, true, true);
+                request.process(this.solrClient);
 
                 LOG.info("Executed task successfully!!");
             }
-            this.solrClient.commit();
+            //this.solrClient.commit();
         } catch (SolrServerException | IOException ex) {
             Logger.getLogger(KeywordsClient.class.getName()).log(Level.SEVERE, null, ex);
         }
     }
 
+}
+
+class ProxyAuthenticator extends Authenticator {
+
+    private String user, password;
+
+    public ProxyAuthenticator(String user, String password) {
+        this.user = user;
+        this.password = password;
+    }
+
+    protected PasswordAuthentication getPasswordAuthentication() {
+        return new PasswordAuthentication(user, password.toCharArray());
+    }
 }

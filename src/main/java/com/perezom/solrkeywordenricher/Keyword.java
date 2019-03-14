@@ -10,27 +10,37 @@ package com.perezom.solrkeywordenricher;
  * @author perezom
  */
 public class Keyword {
-    private int lemma_count;
+    
+    private double score;
+    private int frequency;
     private String lemmatized;
     private String[] original;
 
     public Keyword() {
     }
 
-    public Keyword(int lemma_count, String lemmatized, String[] original) {
-        this.lemma_count = lemma_count;
+    public Keyword(double score, int frequency, String lemmatized, String[] original) {
+        this.score = score;
+        this.frequency = frequency;
         this.lemmatized = lemmatized;
         this.original = original;
     }
-    
-    
 
-    public int getLemma_count() {
-        return lemma_count;
+    
+    public double getScore() {
+        return score;
     }
 
-    public void setLemma_count(int lemma_count) {
-        this.lemma_count = lemma_count;
+    public void setScore(double score) {
+        this.score = score;
+    }
+
+    public int getFrequency() {
+        return frequency;
+    }
+
+    public void setFrequency(int frequency) {
+        this.frequency = frequency;
     }
 
     public String getLemmatized() {

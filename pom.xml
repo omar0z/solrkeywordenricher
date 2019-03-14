@@ -40,8 +40,6 @@
     <dependencies>
         <dependency>
             <groupId>org.glassfish.jersey.containers</groupId>
-            <!--<artifactId>jersey-container-servlet-core</artifactId>-->
-            <!-- use the following artifactId if you don't need servlet 2.x compatibility -->
             <artifactId>jersey-container-servlet</artifactId> 
         </dependency>
         <dependency>
@@ -55,11 +53,14 @@
         <dependency>
             <groupId>org.glassfish.jersey.media</groupId>
             <artifactId>jersey-media-json-binding</artifactId>
-        </dependency>
-        
+        </dependency>        
         <dependency>
             <groupId>org.glassfish.jersey.core</groupId>
             <artifactId>jersey-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jersey.connectors</groupId>
+            <artifactId>jersey-apache-connector</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.solr</groupId>
