@@ -31,7 +31,7 @@ public class ProposalsResource {
     @Path("partb")
     @Produces(MediaType.TEXT_PLAIN)
     public String enrichDocsWithProposalContent() {
-        PartBClient partBClient = new PartBClient("http://localhost:8983/solr/fet-h2020-ria-noHPC-2", "proposalNumber");
+        PartBClient partBClient = new PartBClient("http://localhost:8983/solr/fet-h2020-ria-noHPC-2-full", "proposalNumber");
         return partBClient.process().toString();
     }
 
