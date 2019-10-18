@@ -20,6 +20,8 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedHashMap;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
+
+import com.google.gson.Gson;
 import org.apache.solr.client.solrj.SolrQuery;
 import org.apache.solr.client.solrj.SolrRequest;
 import org.apache.solr.client.solrj.SolrServerException;
@@ -33,22 +35,26 @@ import org.apache.solr.common.SolrDocumentList;
 import org.apache.solr.common.SolrInputDocument;
 import org.glassfish.jersey.client.ClientConfig;
 import org.glassfish.jersey.client.ClientProperties;
+import org.json.simple.JSONObject;
 
 /**
- *
  * @author Omar
  */
 class KeywordsClient {
 
     private SolrDocumentList documents;
+    private String fieldName;
     private final ConcurrentUpdateSolrClient solrClient;
     private final List<SolrInputDocument> enrichedDocuments;
     private static final Logger LOG = Logger.getLogger(KeywordsClient.class.getName());
-    private static final String KEYWORD_SERVICE_URI = "http://s-cnect-drive-in-d.cnect.cec.eu.int/api/service/keyword-extraction";
+    private static final String KEYWORD_SERVICE_URI = "http://s-cnect-drive-in-d.cnect.cec.eu.int/api/service/keyword-extraction-legacy";
 
-    public KeywordsClient() {
+    KeywordsClient(String coreName, String fieldName) {
+        this.fieldName = fieldName;
         this.documents = new SolrDocumentList();
-        this.solrClient = new ConcurrentUpdateSolrClient("http://localhost:8983/solr/fet-h2020-ria-noHPC-1", 32, 8);
+        this.solrClient = new ConcurrentUpdateSolrClient.Builder("http://localhost:8983/solr/" + coreName)
+                .withQueueSize(32)
+                .withThreadCount(8).build();
         this.enrichedDocuments = new ArrayList();
     }
 
@@ -64,10 +70,10 @@ class KeywordsClient {
         SolrQuery query = new SolrQuery();
         query.setRequestHandler("/select");
         query.set("q", "*:*");
-        query.set("rows", 5000);
+        query.set("rows", 15000);
         try {
-            QueryRequest  request = new QueryRequest(query);
-            request.setBasicAuthCredentials("doris","@Doris1");
+            QueryRequest request = new QueryRequest(query);
+            request.setBasicAuthCredentials("doris", "@Doris1");
             this.documents = request.process(this.solrClient).getResults();
             LOG.log(Level.INFO, "Request succeeded. Documents retrieved: {0} documents", this.documents.size());
 
@@ -78,13 +84,8 @@ class KeywordsClient {
 
     private void prepareDocs() {
         LOG.info("Preparing tasks...");
-        
-        Client client = ClientBuilder.newClient();
-//        Authenticator.setDefault(new ProxyAuthenticator("perezom", "Scoutpower1"));
-//        System.setProperty("http.proxyHost", "158.169.131.13");
-//        System.setProperty("http.proxyPort", "8012");
 
-        
+        Client client = ClientBuilder.newClient();
         for (SolrDocument doc : this.documents) {
             try {
                 this.enrichedDocuments.add(enrichDocument(doc, client));
@@ -99,7 +100,7 @@ class KeywordsClient {
         LOG.info("Enriching document...");
 
         MultivaluedMap<String, String> parameters = new MultivaluedHashMap<>();
-        parameters.add("text", (String) doc.get("projectAbstract"));
+        parameters.add("text", (String) doc.get(this.fieldName));
         parameters.add("DORIS_API_KEY", "59b252b6511e69032defce27");
 
         Form form = new Form(parameters);
@@ -110,7 +111,8 @@ class KeywordsClient {
                 .request(MediaType.APPLICATION_FORM_URLENCODED)
                 .post(Entity.form(form));
 
-        KeywordsResponseEntity responseEntity = response.readEntity(KeywordsResponseEntity.class);
+        Gson gson = new Gson();
+        KeywordsResponseEntity responseEntity = gson.fromJson(response.readEntity(String.class), KeywordsResponseEntity.class);
 
         List<String> keywords = new ArrayList<>();
         LOG.info(responseEntity.getKeywords().toString());
@@ -145,7 +147,7 @@ class KeywordsClient {
                 LOG.log(Level.INFO, "Executing task on thread {0}", Thread.currentThread().getName());
                 LOG.info(doc.get("keywords_ss").toString());
                 UpdateRequest request = new UpdateRequest();
-                request.setBasicAuthCredentials("doris","@Doris1");
+                request.setBasicAuthCredentials("doris", "@Doris1");
                 request.add(doc);
                 request.setAction(AbstractUpdateRequest.ACTION.COMMIT, false, true, true);
                 request.process(this.solrClient);
@@ -160,16 +162,3 @@ class KeywordsClient {
 
 }
 
-class ProxyAuthenticator extends Authenticator {
-
-    private String user, password;
-
-    public ProxyAuthenticator(String user, String password) {
-        this.user = user;
-        this.password = password;
-    }
-
-    protected PasswordAuthentication getPasswordAuthentication() {
-        return new PasswordAuthentication(user, password.toCharArray());
-    }
-}
