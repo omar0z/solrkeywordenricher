@@ -23,7 +23,7 @@ public class ProposalsResource {
     @Path("keywords")
     @Produces(MediaType.TEXT_PLAIN)
     public String getIt() {
-        KeywordsClient keywordsClient = new KeywordsClient("fet-h2020-ria-noHPC-2", "proposalAbstract");
+        KeywordsClient keywordsClient = new KeywordsClient("fet-h2020-ria-noHPC-2-full", "proposalAbstract");
         return keywordsClient.process().toString();
     }
 
